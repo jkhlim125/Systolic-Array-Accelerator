@@ -1,5 +1,10 @@
 # Systolic Array Accelerator (RTL + Execution Analysis)
 
+## Highlights
+- 4×4 systolic array implemented in Verilog
+- cycle-level execution trace logging
+- Python-based visualization of hardware behavior
+
 ## 1. Overview
 
 This project implements a 4×4 systolic array accelerator in Verilog and analyzes its execution behavior using a Python-based visualization pipeline.
