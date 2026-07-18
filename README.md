@@ -1,166 +1,60 @@
-# Systolic Array Accelerator (RTL + Execution Analysis)
+# Systolic Array Accelerator — RTL + Execution Trace
 
-## Highlights
-- 4×4 systolic array implemented in Verilog
-- cycle-level execution trace logging
-- Python-based visualization of hardware behavior
+A 4×4 systolic array in Verilog, built for **observability**: every run emits a cycle-level
+`trace.csv` that a Python pipeline turns into behavior plots, so the internal dataflow is visible
+beyond raw waveforms. A cycle-accurate reference design, not a performance-tuned one.
 
-## 1. Overview
+## Result
 
-This project implements a 4×4 systolic array accelerator in Verilog and analyzes its execution behavior using a Python-based visualization pipeline.
+Observed latency is **13 cycles vs a theoretical 12** for a 4×4 array; the extra cycle is control
+overhead — *measured*, not assumed. Correctness shows up directly in the trace: the per-PE MAC-fire
+mask advances diagonally (`0001 → 0013 → 0137 → 137f → 37fe → 7fec → fec8 …`), i.e. the systolic
+wavefront sweeping across the array.
 
-The focus is on building a cycle-accurate hardware design and making its internal dataflow observable beyond conventional waveform inspection.
+![Wave propagation across the 4×4 array](results/heatmap.png)
 
----
+MAC activity sweeps diagonally across the 16 PEs — the signature of correct systolic dataflow,
+reconstructed from `data/trace.csv`.
 
-## 2. Motivation
+| Controller FSM | Partial-sum evolution | Latency |
+|---|---|---|
+| ![FSM](results/controller.png) | ![psum](results/psum.png) | ![latency](results/latency.png) |
 
-Systolic arrays are a common architecture for matrix multiplication in hardware accelerators due to their regular structure and predictable timing. However, understanding how data propagates through the array at the cycle level is not straightforward.
+FSM: `IDLE → LOAD → STREAM → DRAIN → COLLECT → DONE`. Partial sums accumulate with correct MAC
+timing; latency analysis shows the 13-vs-12 overhead.
 
-Waveform-based debugging becomes difficult as system size increases, and internal behavior is not easily interpretable.
+## Architecture
 
-This project was developed to:
-- implement a clean RTL systolic array
-- expose internal signals in a structured way
-- analyze execution behavior using visualization rather than raw waveforms
+Matrix A is injected row-wise, B column-wise; data propagates diagonally. Each PE does
+`psum += a_in × b_in` and forwards its inputs to neighbors, gated by `enable && a_valid && b_valid`
+so only aligned data contributes.
 
----
+```
+rtl/
+  pe.v                 MAC + data forwarding, valid-gated
+  systolic_array.v     2D PE grid
+  controller.v         FSM (IDLE→LOAD→STREAM→DRAIN→COLLECT→DONE)
+  input_loader.v · output_collector.v · top.v
+tb/
+  pe_tb.v · systolic_array_tb.v · top_tb.v   (emit VCD + trace.csv)
+python/
+  plot_accelerator.py  parses trace.csv → the plots above
+data/
+  trace.csv            cycle, state, per-PE mac-fire mask, full psum (hex)
+```
 
-## 3. Architecture
-
-### Dataflow
-
-Matrix A is injected row-wise and matrix B is injected column-wise.  
-Data propagates diagonally across the processing element (PE) array.
-
-Each PE performs multiply-accumulate operations and forwards inputs to neighboring PEs. Final results are collected after all data has traversed the array.
-
----
-
-### Processing Element (PE)
-
-Each PE performs:
-
-- multiplication: `a_in × b_in`
-- accumulation: `psum += product`
-- forwarding of input data to adjacent PEs
-
-Computation is gated by valid signals: enable && a_valid && b_valid
-
-This ensures that only aligned data contributes to the result.
-
----
-
-## 4. Module Structure
-
-### RTL (rtl/)
-
-- `pe.v`  
-  Implements the core multiply-accumulate unit and data forwarding.
-
-- `systolic_array.v`  
-  Instantiates and connects PEs into a 2D array.
-
-- `controller.v`  
-  Finite state machine controlling execution:
-  IDLE → LOAD → STREAM → DRAIN → COLLECT → DONE
-
-- `input_loader.v`  
-  Feeds input matrices into the array.
-
-- `output_collector.v`  
-  Collects final outputs and generates a pulse-based valid signal.
-
-- `top.v`  
-  Integrates all modules into a complete system.
-
----
-
-### Testbench (tb/)
-
-- `top_tb.v`  
-  Drives input stimuli, runs multiple executions, and generates:
-  - waveform dump (VCD)
-  - cycle-level trace (`trace.csv`)
-
----
-
-### Visualization (python/)
-
-- `plot_accelerator.py`  
-  Parses `trace.csv` and generates plots to analyze execution behavior.
-
----
-
-## 5. Simulation Flow
-
-### Compile
+## Run
 
 ```bash
-iverilog -g2005 -Wall -o sim \
-tb/top_tb.v \
-rtl/top.v \
-rtl/controller.v \
-rtl/input_loader.v \
-rtl/output_collector.v \
-rtl/systolic_array.v \
-rtl/pe.v
-
-```
-Run
-```
-vvp sim
+iverilog -g2005 -Wall -o sim tb/top_tb.v rtl/top.v rtl/controller.v \
+  rtl/input_loader.v rtl/output_collector.v rtl/systolic_array.v rtl/pe.v
+vvp sim                         # → top_tb.vcd + trace.csv
+python3 python/plot_accelerator.py   # → results/*.png
 ```
 
-Outputs
-```
-top_tb.vcd
-```
-Waveform for signal-level debugging
-```
-trace.csv
-```
-Structured log of cycle-level execution
+## Takeaways
 
----
-
-## 6. Visualization
-```
-python3 python/plot_accelerator.py
-```
-
-The script generates plots from simulation logs to provide a higher-level view of execution behavior.
-
----
-
-## 7. Results
-
-### Controller Execution Flow
-Shows FSM transitions over time and highlights key execution phases.
-
-### Wave Propagation Across Array
-Visualizes diagonal activation of processing elements, confirming correct systolic dataflow.
-
-### Partial Sum Evolution
-Tracks accumulation behavior within a single PE and verifies correct timing of MAC operations.
-
-### Latency Analysis
-Observed latency is 13 cycles, compared to the theoretical 12 cycles for a 4×4 array.
-The additional cycle is introduced by control logic overhead.
-
-⸻
-
-## 8. Key Observations
-
-	•	Correct systolic behavior appears as diagonal wave propagation across the array
-	•	Valid signal alignment is critical for accurate computation
-	•	Control logic introduces measurable latency beyond ideal datapath timing
-	•	Visualization significantly improves interpretability compared to waveform-only debugging
-
-⸻
-
-## 9. Project Scope
-
-This project focuses on clarity and observability rather than performance optimization.
-It is intended as a cycle-accurate reference design for understanding systolic array behavior at the RTL level.
-
+- Correct systolic behavior reads as a diagonal wavefront across the array.
+- Valid-signal alignment is critical for correct accumulation.
+- Control logic adds measurable latency beyond ideal datapath timing (13 vs 12).
+- A structured trace makes cycle-level behavior interpretable where raw waveforms don't scale.
